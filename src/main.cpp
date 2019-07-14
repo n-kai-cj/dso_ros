@@ -29,7 +29,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <unistd.h>
+//#include <unistd.h>
 
 #include "util/settings.h"
 #include "FullSystem/FullSystem.h"
@@ -58,6 +58,12 @@ void parseArgument(char* arg)
 {
 	int option;
 	char buf[1000];
+	if(1==sscanf(arg,"savefile=%s",buf))
+	{
+		saveFile = buf;
+		printf("saving to %s on finish!\n", saveFile.c_str());
+		return;
+	}
 
 	if(1==sscanf(arg,"sampleoutput=%d",&option))
 	{
@@ -127,13 +133,7 @@ void parseArgument(char* arg)
 		printf("loading gammaCalib from %s!\n", gammaFile.c_str());
 		return;
 	}
-	
-	if(1==sscanf(arg,"savefile=%s",buf))
-	{
-		saveFile = buf;
-		printf("saving to %s on finish!\n", saveFile.c_str());
-		return;
-	}
+
 	printf("could not parse argument \"%s\"!!\n", arg);
 }
 
@@ -232,7 +232,7 @@ int main( int argc, char** argv )
     ros::Subscriber imgSub = nh.subscribe("image", 1, &vidCb);
 
     ros::spin();
-    fullSystem->printResult(saveFile);
+    fullSystem->printResult(saveFile); 
     for(IOWrap::Output3DWrapper* ow : fullSystem->outputWrapper)
     {
         ow->join();
