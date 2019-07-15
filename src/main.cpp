@@ -43,8 +43,19 @@
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/CameraInfo.h>
 #include <geometry_msgs/PoseStamped.h>
-#include "cv_bridge/cv_bridge.h"
+#include <cv_bridge/cv_bridge.h>
 
+#include <std_msgs/Int64.h>
+#include <std_msgs/Int64MultiArray.h>
+#include <std_msgs/Float32MultiArray.h>
+#include <std_msgs/Float64MultiArray.h>
+
+#include <sensor_msgs/PointCloud2.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <pcl_ros/point_cloud.h>
+
+#include <Eigen/Core>
+#include <Eigen/Geometry>
 
 std::string calib = "";
 std::string vignetteFile = "";
@@ -54,6 +65,114 @@ bool useSampleOutput=false;
 
 using namespace dso;
 
+class ROSOutputWrapper : public IOWrap::Output3DWrapper {
+public:
+  ROSOutputWrapper(ros::NodeHandle& nh) {
+    pose_pub = nh.advertise<geometry_msgs::PoseStamped>("dso/vodom", 10);
+    points_pub = nh.advertise<sensor_msgs::PointCloud2>("dso/points", 10);
+
+    live_frame_pub = nh.advertise<sensor_msgs::Image>("dso/live_frame", 10);
+    depth_frame_pub = nh.advertise<sensor_msgs::Image>("dso/depth_frame", 10);
+
+  }
+
+  ~ROSOutputWrapper() {
+    printf("~ROSOutputWrapper()");
+  }
+
+  void publishCamPose(FrameShell* frame, CalibHessian* HCalib) override {
+    // pose_pub
+    Eigen::Quaterniond quat(frame->camToWorld.rotationMatrix());
+    Eigen::Vector3d trans = frame->camToWorld.translation();
+    geometry_msgs::PoseStamped pose_msg;
+    pose_msg.header.stamp = ros::Time(frame->timestamp);
+    pose_msg.header.frame_id = "vodom";
+    pose_msg.pose.position.x = trans.x();
+    pose_msg.pose.position.y = trans.y();
+    pose_msg.pose.position.z = trans.z();
+    pose_msg.pose.orientation.w = quat.w();
+    pose_msg.pose.orientation.x = quat.x();
+    pose_msg.pose.orientation.y = quat.y();
+    pose_msg.pose.orientation.z = quat.z();
+    pose_pub.publish(pose_msg);
+  }
+
+  void publishKeyframes(std::vector<FrameHessian*> &frames, bool final, CalibHessian* HCalib) {
+    if (!final) {
+      return;
+    }
+    float fx = HCalib->fxl();
+    float fy = HCalib->fyl();
+    float cx = HCalib->cxl();
+    float cy = HCalib->cyl();
+    float fxi = 1/fx;
+    float fyi = 1/fy;
+    float cxi = -cx / fx;
+    float cyi = -cy / fy;
+    // Open stream to write in file "points.ply"
+    std::ofstream output_points;
+    output_points.open("points.ply", std::ios_base::app);
+    // point cloud
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>());
+    for(FrameHessian* f : frames) {
+      auto const & m =  f->shell->camToWorld.matrix3x4();
+      auto const & points = f->pointHessiansMarginalized;
+      for (auto const* p : frame->pointHessiansMarginalized) {
+        float depth = 1.0f / p->idepth;
+        auto const x = (p->u * fxi + cxi) * depth;
+        auto const y = (p->v * fyi + cyi) * depth;
+        auto const z = depth * (1 + 2*fxi);
+        Eigen::Vector3d world_point = cam2world * Eigen::Vector4d(x, y, z, 1.f);
+        pcl::PointXYZ pt;
+        pt.getVector3fMap() = world_point.cast<float>();
+        cloud->push_back(pt);
+      }
+    }
+    // Close steam
+    output_points.close();
+    // publish point cloud
+    cloud->header.frame_id = "world";
+    cloud->width = cloud->size();
+    cloud->height = 1;
+    cloud->is_dense = false;
+    points_pub.publish(cloud);
+  }
+
+  void pushLiveFrame(FrameHessian* image) {
+    cv::Mat mat = cv::Mat(dso::hG[0], dso::wG[0], CV_32FC3, image->dI->data()) * (1/254.0f);
+    std::vector<cv::Mat> channels(3);
+    cv::split(mat, channels);
+    mat = channels[0];
+    mat.convertTo(mat, CV_8UC1, 255.0f);
+    sensor_msgs::ImagePtr msg = cv_bridge::CvImage(std_msgs::Header(), "mono8", mat).toImageMsg();
+    live_frame_pub.publish(msg);
+  }
+
+  void pushDepthImage(MinimalImageB3* image) {
+    cv::Mat mat = cv::Mat(image->h, image->w, CV_8UC3, image->data);
+    sensor_msgs::ImagePtr msg = cv_bridge::CvImage(std_msgs::Header(), "rgb8", mat).toImageMsg();
+    depth_frame_pub.publish(msg);
+  }
+
+  void pushDepthImageFloat(MinimalImageF* image, FrameHessian* KF) {
+    // cv::Mat mat = cv::Mat(image->h, image->w, CV_32FC1, image->data);
+    // mat.convertTo(mat, CV_8UC1, 255.0f);
+    // cv::Mat imverted_img;
+    // cv::bitwise_not(mat, imverted_img);
+    // std_msgs::Header header;
+    // header.frame_id = KF->frameID;
+    // header.seq = KF->shell->incoming_id;
+    // sensor_msgs::ImagePtr msg = cv_bridge::CvImage(header, "mono8", imverted_img).toImageMsg();
+    // depth_frame_pub.publish(msg);
+  }
+private:
+  ros::Publisher pose_pub;
+  ros::Publisher points_pub;
+
+  ros::Publisher live_frame_pub;
+  ros::Publisher depth_frame_pub;
+
+};
 void parseArgument(char* arg)
 {
 	int option;
@@ -133,6 +252,53 @@ void parseArgument(char* arg)
 		printf("loading gammaCalib from %s!\n", gammaFile.c_str());
 		return;
 	}
+	if(1==sscanf(arg,"activePoints=%f",&setting_desiredPointDensity)) {
+	  printf("active points = %f\n", setting_desiredPointDensity);
+	  return;
+	}
+	if(1==sscanf(arg,"candidates=%f",&setting_desiredImmatureDensity)) {
+	  printf("point candidates = %f\n", setting_desiredImmatureDensity);
+	  return;
+	}
+	if(1==sscanf(arg,"maxFrames=%d",&setting_maxFrames)) {
+	  printf("max frames = %d\n", setting_maxFrames);
+	  return;
+	}
+	if(1==sscanf(arg,"minFrames=%d",&setting_minFrames)) {
+	  printf("min frames = %d\n", setting_minFrames);
+	  return;
+	}
+	if(1==sscanf(arg,"kfFreq=%f",&setting_kfGlobalWeight)) {
+	  printf("key frame frequence, general weight on threshold, the larger the more KF's are taken (e.g., 2 = double the amount of KF's). = %f\n", setting_kfGlobalWeight);
+	  return;
+	}
+	if(1==sscanf(arg,"reTrackTh=%f",&setting_reTrackThreshold)) {
+	  printf("re tracking threshold (larger = re-track more often) = %f\n", setting_reTrackThreshold);
+	  return;
+	}
+	if(1==sscanf(arg,"goStepByStep=%d", &option)) {
+	  if(option==1) {
+	    goStepByStep = true;
+	    printf("go step by step!\n");
+	  }
+	  return;
+	}
+	if(1==sscanf(arg,"traceGNTh=%f",&setting_trace_GNThreshold)) {
+	  printf("trace GN threshold (GN stop after this stepsize.) = %f", setting_trace_GNThreshold);
+	  return;
+	}
+	if(1==sscanf(arg,"maxOptIter=%d", &setting_maxOptIterations)) {
+	  printf("max Opt Iteraions (max GN iterations.) = %d\n", setting_maxOptIterations);
+	  return;
+	}
+	if(1==sscanf(arg,"minOptIter=%d", &setting_minOptIterations)) {
+	  printf("min Opt  Iterations (min GN iterations.) = %d\n", setting_minOptIterations);
+	  return;
+	}
+	if(1==sscanf(arg,"optIterTh=%f", &setting_thOptIterations)) {
+	  printf("Opt Iterations threshold (factor on break threshold for GN iteration (larger = break earlier))= %f\n", setting_thOptIterations);
+	  return;
+	}
 
 	printf("could not parse argument \"%s\"!!\n", arg);
 }
@@ -173,6 +339,9 @@ void vidCb(const sensor_msgs::ImageConstPtr img)
 
 }
 
+void imuCb(const geometry_msgs::PoseStamped pose_msgs) {
+}
+
 
 
 
@@ -183,7 +352,7 @@ int main( int argc, char** argv )
 
 
 
-	for(int i=1; i<argc;i++) parseArgument(argv[i]);
+	//for(int i=1; i<argc;i++) parseArgument(argv[i]);
 
 
 	setting_desiredImmatureDensity = 1000;
@@ -201,6 +370,7 @@ int main( int argc, char** argv )
 	setting_affineOptModeA = 0;
 	setting_affineOptModeB = 0;
 
+	for(int i=1; i<argc;i++) parseArgument(argv[i]);
 
 
     undistorter = Undistort::getUndistorterForFile(calib, gammaFile, vignetteFile);
@@ -230,6 +400,10 @@ int main( int argc, char** argv )
 
     ros::NodeHandle nh;
     ros::Subscriber imgSub = nh.subscribe("image", 1, &vidCb);
+	ros::Subscriber imuSub = nh.subscribe("pose", 1, &imuCb);
+
+    // register output wrapper
+	fullSystem->outputWrapper.push_back(new ROSOutputWrapper(nh));
 
     ros::spin();
     fullSystem->printResult(saveFile); 

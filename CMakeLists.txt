@@ -6,6 +6,7 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   sensor_msgs
   cv_bridge
+  pcl_ros
 )
 
 ##### DSO #####
@@ -61,7 +62,7 @@ set(Boost_INCLUDE_DIR ${BOOST_INCLUDEDIR})
 set(Boost_LIBRARY_DIR ${BOOST_LIBRARYDIR})
 string(REPLACE "." "" BOOST_MSVC_LIB ${BOOST_MSVC})
 string(REPLACE "msvc-" "vc" BOOST_MSVC_LIB ${BOOST_MSVC_LIB})
-set(Boost_LIBS "${BOOST_LIBRARYDIR}/libboost_system-${BOOST_MSVC_LIB}-mt-x64-1_70.lib;${BOOST_LIBRARYDIR}/libboost_thread-${BOOST_MSVC_LIB}-mt-s-x64-1_70.lib;${BOOST_LIBRARYDIR}/libboost_date_time-${BOOST_MSVC_LIB}-mt-s-x64-1_70.lib;${BOOST_LIBRARYDIR}/libboost_chrono-${BOOST_MSVC_LIB}-mt-s-x64-1_70.lib;${BOOST_LIBRARYDIR}/libboost_atomic-${BOOST_MSVC_LIB}-mt-s-x64-1_70.lib;")
+set(Boost_LIBS "${BOOST_LIBRARYDIR}/libboost_system-${BOOST_MSVC_LIB}-mt-x64-1_70.lib;${BOOST_LIBRARYDIR}/libboost_thread-${BOOST_MSVC_LIB}-mt-s-x64-1_70.lib;${BOOST_LIBRARYDIR}/libboost_date_time-${BOOST_MSVC_LIB}-mt-s-x64-1_70.lib;${BOOST_LIBRARYDIR}/libboost_chrono-${BOOST_MSVC_LIB}-mt-s-x64-1_70.lib;${BOOST_LIBRARYDIR}/libboost_atomic-${BOOST_MSVC_LIB}-mt-s-x64-1_70.lib;${BOOST_LIBRARYDIR}/libboost_filesystem-${BOOST_MSVC_LIB}-mt-s-x64-1_70.lib;${BOOST_LIBRARYDIR}/libboost_iostreams-${BOOST_MSVC_LIB}-mt-s-x64-1_70.lib;")
 message("\n\n---- FOUND Boost Headers at\n\"${BOOST_INCLUDE_DIRS}\"")
 message("---- FOUND Boost Libs at \n\"${BOOST_LIBRARY_DIRS}\"")
 message("### BOOST_ROOT = ${BOOST_ROOT}")
@@ -86,6 +87,24 @@ message("\n\n### CMAKE_CXX_FLAGS_DEBUG = ${CMAKE_CXX_FLAGS_DEBUG}")
 message("\n\n### CMAKE_CXX_FLAGS_RELEASE = ${CMAKE_CXX_FLAGS_RELEASE}")
 message("\n\n### CMAKE_CXX_FLAGS_RELWITHDEBINFO = ${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
 
+##### exclude ROS Boost and OpenCV to avoid conflict error #####
+set(TMP_INCLUDES "")
+foreach(include IN LISTS catkin_INCLUDE_DIRS)
+  if(NOT "${include}" MATCHES ".*boost.*" AND NOT "${include}" MATCHES ".*opencv.*")
+    list(APPEND TMP_INCLUDES "${include}")
+  endif()
+endforeach()
+set(catkin_INCLUDE_DIRS "${TMP_INCLUDES}")
+
+##### exclude ROS Boost and OpenCV to avoid conflict error #####
+set(TMP_LIB "")
+foreach(lib IN LISTS catkin_LIBRARIES)
+  if(NOT "${lib}" MATCHES ".*boost.*" AND NOT "${lib}" MATCHES ".*opencv.*" AND NOT "${lib}" MATCHES "debug")
+    list(APPEND TMP_LIB "${lib}")
+  endif()
+endforeach()
+set(catkin_LIBRARIES "${TMP_LIB}")
+
 ##### print ALL CMAKE VARIABLES #####
 message(STATUS "*** dump start cmake variables ***")
 get_cmake_property(_variableNames VARIABLES)
@@ -95,19 +114,14 @@ foreach(_variableName ${_variableNames})
 endforeach()
 message(STATUS "*** dump end ***")
 
-## exclude ROS Boost to avoid error
-set(catkin_LIBRARIES "C:/opt/ros/melodic/x64/lib/roscpp.lib;;C:/opt/ros/melodic/x64/lib/xmlrpcpp.lib;C:/opt/ros/melodic/x64/lib/cv_bridge.lib;C:/opt/rosdeps/x64/lib/opencv_core341.lib;C:/opt/rosdeps/x64/lib/opencv_imgproc341.lib;C:/opt/rosdeps/x64/lib/opencv_imgcodecs341.lib;C:/opt/ros/melodic/x64/lib/rosconsole.lib;C:/opt/ros/melodic/x64/lib/rosconsole_log4cxx.lib;C:/opt/ros/melodic/x64/lib/rosconsole_backend_interface.lib;C:/opt/rosdeps/x64/lib/log4cxx.lib;C:/opt/ros/melodic/x64/lib/roscpp_serialization.lib;C:/opt/ros/melodic/x64/lib/rostime.lib;C:/opt/ros/melodic/x64/lib/cpp_common.lib;optimized;C:/opt/rosdeps/x64/lib/console_bridge.lib")
-
-## exclude ROS Boost to avoid error
-set(catkin_INCLUDE_DIRS "C:/opt/ros/melodic/x64/include;C:/opt/ros/melodic/x64/share/xmlrpcpp/cmake/../../../include/xmlrpcpp;C:/opt/rosdeps/x64/include;C:/opt/rosdeps/x64/include/opencv")
-
 catkin_package(
   CATKIN_DEPENDS
   geometry_msgs
   roscpp
   sensor_msgs
   cv_bridge
-  )
+  pcl_ros
+)
 
 ###########
 ## Build ##
@@ -139,4 +153,4 @@ target_link_libraries(dso_live
   ${Pangolin_LIBRARIES}
   ${OpenCV_LIBS}
   ${catkin_LIBRARIES}
-  )
+)
