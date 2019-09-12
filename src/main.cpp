@@ -117,12 +117,12 @@ public:
     for(FrameHessian* f : frames) {
       auto const & m =  f->shell->camToWorld.matrix3x4();
       auto const & points = f->pointHessiansMarginalized;
-      for (auto const* p : frame->pointHessiansMarginalized) {
+      for (auto const* p : f->pointHessiansMarginalized) {
         float depth = 1.0f / p->idepth;
         auto const x = (p->u * fxi + cxi) * depth;
         auto const y = (p->v * fyi + cyi) * depth;
         auto const z = depth * (1 + 2*fxi);
-        Eigen::Vector3d world_point = cam2world * Eigen::Vector4d(x, y, z, 1.f);
+        Eigen::Vector3d world_point = m * Eigen::Vector4d(x, y, z, 1.f);
         pcl::PointXYZ pt;
         pt.getVector3fMap() = world_point.cast<float>();
         cloud->push_back(pt);
